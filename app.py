@@ -270,11 +270,13 @@ def predict_for_zone(zone: str, dt: pd.Timestamp) -> Dict[str, Any]:
             k = int(sub["free"]); n = int(sub["total"])
             avail = float(sub["availability"])
             conf = confidence_from_history(k, n)
+            low, high = wilson_interval(k, n)
             return {
                 "availability": avail,
                 "confidence": conf,
                 "model": "historical",
                 "reason": f"Based on {n} historical samples in this bucket."
+                "samples": {"free": k, "total": n, "ci_low": low, "ci_high": high}
             }
 
     # 3) Fallback (no occupancy column found)
@@ -435,3 +437,14 @@ def demo_page():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))
     app.run(host="0.0.0.0", port=port, debug=True)
+
+@app.route("/historical_trends", methods=["GET"])
+def historical_trends():
+    zone = request.args.get("zone")
+    if not has_hist or not zone:
+        return jsonify({"data": []})
+    sub = hist_df[hist_df["zone_number"].astype(str) == str(zone)]
+    out = (sub[["dow","hour","availability","total"]]
+            .sort_values(["dow","hour"])
+            .to_dict(orient="records"))
+    return jsonify({"zone": str(zone), "data": out})
