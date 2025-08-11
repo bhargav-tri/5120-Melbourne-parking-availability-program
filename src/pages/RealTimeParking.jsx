@@ -5,50 +5,47 @@ export default function RealTimeParking() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("us2.1");
 
-
-const theme = useMemo(
-  () => ({
-    bg: "#ffffff",         
-    panel: "#ffffff",      
-    text: "#000000",       
-    subtext: "#555555",    
-    accent: "#007BFF",     
-    accentHover: "#339BFF",
-    muted: "#888888",
-    border: "rgba(0,0,0,0.12)",
-    shadow: "0 4px 20px rgba(0,0,0,0.1)",
-    radius: "12px",
-  }),
-  []
-);
-
+  // 浅色主题
+  const theme = useMemo(
+    () => ({
+      bg: "#ffffff",
+      panel: "#ffffff",
+      text: "#111111",
+      subtext: "#555555",
+      accent: "#007BFF",
+      accentHover: "#339BFF",
+      muted: "#888888",
+      border: "rgba(0,0,0,0.12)",
+      shadow: "0 4px 20px rgba(0,0,0,0.08)",
+      radius: "12px",
+    }),
+    []
+  );
 
   const tabs = [
-    { id: "us2.1", label: "US2.1  Find Parking (Real‑time)" },
-    { id: "us2.2", label: "US2.2  Predicted Availability" },
-    { id: "us2.3", label: "US2.3  Historical Trends" },
+    { id: "us2.1", label: " Find Parking (Real-time)" },
+    { id: "us2.2", label: " Predicted Availability" },
+    { id: "us2.3", label: " Historical Trends" },
   ];
 
   const backButtonStyle = {
     position: "absolute",
-    top: "20px",
-    right: "30px",
-    fontSize: "2rem",
+    top: 20,
+    right: 30,
+    fontSize: "1.5rem",
     color: theme.text,
-    background: "rgba(255,255,255,0.08)",
+    background: "rgba(0,0,0,0.04)",
     borderRadius: "50%",
-    width: "44px",
-    height: "44px",
+    width: 40,
+    height: 40,
     display: "flex",
     justifyContent: "center",
     alignItems: "center",
     cursor: "pointer",
     zIndex: 10,
-    backdropFilter: "blur(6px)",
     border: `1px solid ${theme.border}`,
   };
 
-  // 键盘左右方向键切换
   const onKeyDownTabs = useCallback(
     (e) => {
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
@@ -60,15 +57,13 @@ const theme = useMemo(
           : (idx - 1 + tabs.length) % tabs.length;
       setActiveTab(tabs[next].id);
     },
-    [activeTab, tabs]
+    [activeTab]
   );
 
-  useEffect(() => {
-    window.scrollTo(0, 0);
-  }, []);
+  useEffect(() => window.scrollTo(0, 0), []);
 
   return (
-    <div style={{ backgroundColor: theme.bg, minHeight: "100vh", color: theme.text }}>
+    <div style={{ background: theme.bg, minHeight: "100vh", color: theme.text }}>
       {/* 返回按钮 */}
       <div
         style={backButtonStyle}
@@ -80,11 +75,11 @@ const theme = useMemo(
         ←
       </div>
 
-      {/* 标题区 */}
+      {/* 顶部标题 + 导航（保留居中宽度） */}
       <header
         style={{
-          paddingTop: 80,
-          paddingBottom: 18,
+          paddingTop: 72,
+          paddingBottom: 12,
           textAlign: "center",
           maxWidth: 1100,
           margin: "0 auto",
@@ -92,12 +87,11 @@ const theme = useMemo(
           paddingRight: 16,
         }}
       >
-        <h1 style={{ margin: 0, letterSpacing: 0.5 }}>Real‑Time Parking</h1>
+        <h1 style={{ margin: 0, letterSpacing: 0.3 }}>Real-Time Parking</h1>
         <p style={{ marginTop: 8, color: theme.subtext }}>
-          Explore real‑time parking, predictions, and historical trends for Melbourne CBD.
+          
         </p>
 
-        {/* 导航按钮 */}
         <nav
           aria-label="Parking features"
           onKeyDown={onKeyDownTabs}
@@ -106,7 +100,7 @@ const theme = useMemo(
             gap: 10,
             justifyContent: "center",
             flexWrap: "wrap",
-            marginTop: 18,
+            marginTop: 16,
           }}
         >
           {tabs.map((t) => {
@@ -118,8 +112,8 @@ const theme = useMemo(
                 aria-pressed={active}
                 style={{
                   border: `1px solid ${active ? theme.accent : theme.border}`,
-                  background: active ? theme.accent : "transparent",
-                  color: active ? "#121212" : theme.text,
+                  background: active ? theme.accent : "#fff",
+                  color: active ? "#fff" : theme.text,
                   padding: "10px 16px",
                   fontSize: "0.95rem",
                   borderRadius: 999,
@@ -141,69 +135,90 @@ const theme = useMemo(
         </nav>
       </header>
 
-      {/* 内容区 */}
-      <main
-        style={{
-          maxWidth: 1100,
-          margin: "0 auto",
-          padding: 16,
-          paddingBottom: 40,
-        }}
-      >
-        <section
+      {/* 内容区：US2.1 地图做 full-bleed，US2.2/2.3 常规宽度 */}
+      {activeTab === "us2.1" ? (
+        <US21RealTimePanel theme={theme} />
+      ) : (
+        <main
           style={{
-            background: theme.panel,
-            border: `1px solid ${theme.border}`,
-            borderRadius: theme.radius,
-            boxShadow: theme.shadow,
-            minHeight: 420,
-            padding: 20,
+            maxWidth: 1100,
+            margin: "0 auto",
+            padding: 16,
+            paddingBottom: 40,
           }}
         >
-          {activeTab === "us2.1" && <US21RealTimePanel theme={theme} />}
-          {activeTab === "us2.2" && <US22PredictivePanel theme={theme} />}
-          {activeTab === "us2.3" && <US23HistoricalPanel theme={theme} />}
-        </section>
-      </main>
+          <section
+            style={{
+              background: theme.panel,
+              border: `1px solid ${theme.border}`,
+              borderRadius: theme.radius,
+              boxShadow: theme.shadow,
+              minHeight: 420,
+              padding: 20,
+            }}
+          >
+            {activeTab === "us2.2" && <US22PredictivePanel theme={theme} />}
+            {activeTab === "us2.3" && <US23HistoricalPanel theme={theme} />}
+          </section>
+        </main>
+      )}
     </div>
   );
 }
 
 /* ---------------- 面板组件 ---------------- */
 
-// US2.1 实时停车：嵌入已生成的 HTML（该 HTML 内部自带刷新逻辑）
+// US2.1：导航保留，地图横向铺满到视口两侧
 function US21RealTimePanel({ theme }) {
   return (
-    <div>
-      <h2 style={{ marginTop: 6, marginBottom: 4 }}>US2.1 — Find Available Parking (Real‑time)</h2>
-      <p style={{ color: theme.subtext, marginTop: 0 }}>
-        Live map of legal public/commercial spots with availability status (green / yellow / red).
-      </p>
-
+    <section aria-label="Real-time map" style={{ marginTop: 8 }}>
+      {/* 标题说明仍居中 */}
       <div
         style={{
-          marginTop: 16,
-          height: "78vh",
-          borderRadius: 12,
-          overflow: "hidden",
-          border: `1px solid ${theme.border}`,
-          background:
-            "linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.06) 100%)",
+          maxWidth: 1100,
+          margin: "0 auto",
+          padding: "0 16px",
+          color: theme.subtext,
         }}
       >
-        <iframe
-          title="Live Parking Map"
-          // 确保 HTML 位于 public/maps/latest_parking_map_live.html
-          src="/maps/latest_parking_map_live.html"
-          style={{ width: "100%", height: "100%", border: "0" }}
-          allow="fullscreen"
-        />
+        <h2 style={{ marginTop: 6, marginBottom: 4, color: "#111" }}>
+          
+        </h2>
+        <p style={{ marginTop: 0 }}>
+          Live map of legal public/commercial spots with availability status (green / yellow / red).
+        </p>
       </div>
-    </div>
+
+      {/* full-bleed 容器：宽度 100vw，左外边距拉到视口左缘 */}
+      <div
+        style={{
+          width: "100vw",
+          marginLeft: "calc(50% - 50vw)",
+          marginTop: 12,
+        }}
+      >
+        <div
+          style={{
+            height: "calc(100vh - 260px)", // 预留顶部导航高度
+            minHeight: 520,
+            borderTop: `1px solid ${theme.border}`,
+            borderBottom: `1px solid ${theme.border}`,
+            background: "#f6f7f9",
+          }}
+        >
+          <iframe
+            title="Live Parking Map"
+            src="/maps/latest_parking_map_live.html"
+            style={{ width: "100%", height: "100%", border: 0 }}
+            allow="fullscreen"
+          />
+        </div>
+      </div>
+    </section>
   );
 }
 
-// US2.2 预测可用性（浅色表单 + 高对比按钮）
+// US2.2 占位
 function US22PredictivePanel({ theme }) {
   const [form, setForm] = useState({ location: "", date: "", time: "" });
   const [result, setResult] = useState(null);
@@ -240,55 +255,23 @@ function US22PredictivePanel({ theme }) {
         }}
       >
         <div style={{ display: "grid" }}>
-          <label style={{ color: theme.muted, fontSize: 12, marginBottom: 6 }}>
-            Location / Street
-          </label>
+          <label style={{ color: theme.muted, fontSize: 12, marginBottom: 6 }}>Location / Street</label>
           <input
             name="location"
             value={form.location}
             onChange={handleChange}
             placeholder="e.g., Collins St"
-            style={{
-              ...inputStyle(theme),
-              background: "#ffffff",
-              color: theme.text,
-              borderColor: theme.border,
-            }}
+            style={inputStyle(theme)}
           />
         </div>
-
         <div style={{ display: "grid" }}>
           <label style={{ color: theme.muted, fontSize: 12, marginBottom: 6 }}>Date</label>
-          <input
-            name="date"
-            type="date"
-            value={form.date}
-            onChange={handleChange}
-            style={{
-              ...inputStyle(theme),
-              background: "#ffffff",
-              color: theme.text,
-              borderColor: theme.border,
-            }}
-          />
+          <input name="date" type="date" value={form.date} onChange={handleChange} style={inputStyle(theme)} />
         </div>
-
         <div style={{ display: "grid" }}>
           <label style={{ color: theme.muted, fontSize: 12, marginBottom: 6 }}>Time</label>
-          <input
-            name="time"
-            type="time"
-            value={form.time}
-            onChange={handleChange}
-            style={{
-              ...inputStyle(theme),
-              background: "#ffffff",
-              color: theme.text,
-              borderColor: theme.border,
-            }}
-          />
+          <input name="time" type="time" value={form.time} onChange={handleChange} style={inputStyle(theme)} />
         </div>
-
         <button
           type="submit"
           style={{
@@ -296,19 +279,10 @@ function US22PredictivePanel({ theme }) {
             borderRadius: 10,
             border: `1px solid ${theme.accent}`,
             background: theme.accent,
-            color: "#ffffff",
+            color: "#fff",
             padding: "0 16px",
             fontWeight: 600,
             cursor: "pointer",
-            transition: "background .15s ease, box-shadow .15s ease",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = theme.accentHover || theme.accent;
-            e.currentTarget.style.boxShadow = "0 6px 16px rgba(0,0,0,0.1)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = theme.accent;
-            e.currentTarget.style.boxShadow = "none";
           }}
         >
           Get Prediction
@@ -320,14 +294,13 @@ function US22PredictivePanel({ theme }) {
       </div>
 
       <div style={{ marginTop: 14, fontSize: 12, color: theme.muted }}>
-        Notes: Uses ≥3 months of historical data and recent trends. Only high‑confidence results will be shown in the final build.
+        Notes: Uses ≥3 months of historical data and recent trends. Only high-confidence results will be shown in the final build.
       </div>
     </div>
   );
 }
 
-
-// US2.3 历史趋势（占位）
+// US2.3 占位
 function US23HistoricalPanel({ theme }) {
   const [filters, setFilters] = useState({ area: "" });
   const [status, setStatus] = useState("Enter a street to load data");
@@ -384,7 +357,7 @@ function inputStyle(theme) {
     padding: "0 12px",
     borderRadius: 10,
     border: `1px solid ${theme.border}`,
-    background: "#ffffffff",
+    background: "#fff",
     color: theme.text,
     outline: "none",
   };
