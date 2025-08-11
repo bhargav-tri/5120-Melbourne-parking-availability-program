@@ -1,26 +1,27 @@
 import { useNavigate } from "react-router-dom";
 import { useMemo, useState, useCallback, useEffect } from "react";
 
-export default function DataInsights() {
+export default function RealTimeParking() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("us2.1");
 
-  // 主题与样式
-  const theme = useMemo(
-    () => ({
-      bg: "#1b1b1f",
-      panel: "#24242a",
-      text: "#ffffff",
-      subtext: "#cfcfd6",
-      accent: "#d6ff3f", // 近似截图中的荧光黄
-      accentHover: "#e6ff7a",
-      muted: "#8b8b93",
-      border: "rgba(255,255,255,0.12)",
-      shadow: "0 10px 30px rgba(0,0,0,0.35)",
-      radius: "16px",
-    }),
-    []
-  );
+
+const theme = useMemo(
+  () => ({
+    bg: "#ffffff",         
+    panel: "#ffffff",      
+    text: "#000000",       
+    subtext: "#555555",    
+    accent: "#007BFF",     
+    accentHover: "#339BFF",
+    muted: "#888888",
+    border: "rgba(0,0,0,0.12)",
+    shadow: "0 4px 20px rgba(0,0,0,0.1)",
+    radius: "12px",
+  }),
+  []
+);
+
 
   const tabs = [
     { id: "us2.1", label: "US2.1  Find Parking (Real‑time)" },
@@ -63,14 +64,19 @@ export default function DataInsights() {
   );
 
   useEffect(() => {
-    // 页面加载时滚到顶部，避免在移动端被内容顶下去
     window.scrollTo(0, 0);
   }, []);
 
   return (
     <div style={{ backgroundColor: theme.bg, minHeight: "100vh", color: theme.text }}>
       {/* 返回按钮 */}
-      <div style={backButtonStyle} onClick={() => navigate("/")} title="Back to Home" role="button" aria-label="Back">
+      <div
+        style={backButtonStyle}
+        onClick={() => navigate("/")}
+        title="Back to Home"
+        role="button"
+        aria-label="Back"
+      >
         ←
       </div>
 
@@ -86,7 +92,7 @@ export default function DataInsights() {
           paddingRight: 16,
         }}
       >
-        <h1 style={{ margin: 0, letterSpacing: 0.5 }}>Parking & Traffic Insights</h1>
+        <h1 style={{ margin: 0, letterSpacing: 0.5 }}>Real‑Time Parking</h1>
         <p style={{ marginTop: 8, color: theme.subtext }}>
           Explore real‑time parking, predictions, and historical trends for Melbourne CBD.
         </p>
@@ -165,40 +171,39 @@ export default function DataInsights() {
 
 /* ---------------- 面板组件 ---------------- */
 
-// US2.1 实时停车：地图占位 + Spot 信息卡片占位
+// US2.1 实时停车：嵌入已生成的 HTML（该 HTML 内部自带刷新逻辑）
 function US21RealTimePanel({ theme }) {
   return (
     <div>
       <h2 style={{ marginTop: 6, marginBottom: 4 }}>US2.1 — Find Available Parking (Real‑time)</h2>
       <p style={{ color: theme.subtext, marginTop: 0 }}>
-        Live map of legal public/commercial spots with availability status (green / yellow / red). Auto‑refresh every 30–60s.
+        Live map of legal public/commercial spots with availability status (green / yellow / red).
       </p>
 
-      {/* 地图占位块（将来接入地图SDK/GeoJSON） */}
       <div
         style={{
           marginTop: 16,
-          height: 320,
+          height: "78vh",
           borderRadius: 12,
-          border: `1px dashed ${theme.border}`,
-          display: "grid",
-          placeItems: "center",
+          overflow: "hidden",
+          border: `1px solid ${theme.border}`,
           background:
             "linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.06) 100%)",
         }}
       >
-        <div style={{ textAlign: "center" }}>
-          <div style={{ fontWeight: 600 }}>Map Placeholder</div>
-          <div style={{ color: theme.muted, marginTop: 6 }}>
-            TODO: Render CBD bays + sensors. Click a marker to view type / cost / time limit / distance.
-          </div>
-        </div>
+        <iframe
+          title="Live Parking Map"
+          // 确保 HTML 位于 public/maps/latest_parking_map_live.html
+          src="/maps/latest_parking_map_live.html"
+          style={{ width: "100%", height: "100%", border: "0" }}
+          allow="fullscreen"
+        />
       </div>
     </div>
   );
 }
 
-// US2.2 预测可用性：时间+地点表单 + 结果文案（使用“most likely / not possible”表述）
+// US2.2 预测可用性（浅色表单 + 高对比按钮）
 function US22PredictivePanel({ theme }) {
   const [form, setForm] = useState({ location: "", date: "", time: "" });
   const [result, setResult] = useState(null);
@@ -210,7 +215,6 @@ function US22PredictivePanel({ theme }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    // 这里先返回占位文案；接入真实模型时按 AC：至少3个月历史 + 仅展示高置信度结果
     const msg =
       form.location && form.date && form.time
         ? `Parking near “${form.location}” at ${form.time} on ${form.date} is most likely available.`
@@ -236,23 +240,55 @@ function US22PredictivePanel({ theme }) {
         }}
       >
         <div style={{ display: "grid" }}>
-          <label style={{ color: theme.muted, fontSize: 12, marginBottom: 6 }}>Location / Street</label>
+          <label style={{ color: theme.muted, fontSize: 12, marginBottom: 6 }}>
+            Location / Street
+          </label>
           <input
             name="location"
             value={form.location}
             onChange={handleChange}
             placeholder="e.g., Collins St"
-            style={inputStyle(theme)}
+            style={{
+              ...inputStyle(theme),
+              background: "#ffffff",
+              color: theme.text,
+              borderColor: theme.border,
+            }}
           />
         </div>
+
         <div style={{ display: "grid" }}>
           <label style={{ color: theme.muted, fontSize: 12, marginBottom: 6 }}>Date</label>
-          <input name="date" type="date" value={form.date} onChange={handleChange} style={inputStyle(theme)} />
+          <input
+            name="date"
+            type="date"
+            value={form.date}
+            onChange={handleChange}
+            style={{
+              ...inputStyle(theme),
+              background: "#ffffff",
+              color: theme.text,
+              borderColor: theme.border,
+            }}
+          />
         </div>
+
         <div style={{ display: "grid" }}>
           <label style={{ color: theme.muted, fontSize: 12, marginBottom: 6 }}>Time</label>
-          <input name="time" type="time" value={form.time} onChange={handleChange} style={inputStyle(theme)} />
+          <input
+            name="time"
+            type="time"
+            value={form.time}
+            onChange={handleChange}
+            style={{
+              ...inputStyle(theme),
+              background: "#ffffff",
+              color: theme.text,
+              borderColor: theme.border,
+            }}
+          />
         </div>
+
         <button
           type="submit"
           style={{
@@ -260,10 +296,19 @@ function US22PredictivePanel({ theme }) {
             borderRadius: 10,
             border: `1px solid ${theme.accent}`,
             background: theme.accent,
-            color: "#121212",
+            color: "#ffffff",
             padding: "0 16px",
             fontWeight: 600,
             cursor: "pointer",
+            transition: "background .15s ease, box-shadow .15s ease",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = theme.accentHover || theme.accent;
+            e.currentTarget.style.boxShadow = "0 6px 16px rgba(0,0,0,0.1)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = theme.accent;
+            e.currentTarget.style.boxShadow = "none";
           }}
         >
           Get Prediction
@@ -281,7 +326,8 @@ function US22PredictivePanel({ theme }) {
   );
 }
 
-// US2.3 历史趋势：图表占位 + 过滤器
+
+// US2.3 历史趋势（占位）
 function US23HistoricalPanel({ theme }) {
   const [filters, setFilters] = useState({ area: "" });
   const [status, setStatus] = useState("Enter a street to load data");
@@ -321,14 +367,16 @@ function US23HistoricalPanel({ theme }) {
         value={filters.area}
         onChange={handleChange}
         placeholder="e.g., Swanston Street"
+        style={inputStyle(theme)}
       />
-      <button onClick={loadTrends}>Load Trends</button>
-      <div>{status}</div>
-      <pre>{data ? JSON.stringify(data, null, 2) : null}</pre>
+      <button onClick={loadTrends} style={{ marginLeft: 8, ...inputStyle(theme), height: 42 }}>
+        Load Trends
+      </button>
+      <div style={{ marginTop: 10, color: theme.subtext }}>{status}</div>
+      <pre style={{ marginTop: 10 }}>{data ? JSON.stringify(data, null, 2) : null}</pre>
     </div>
   );
 }
-
 
 function inputStyle(theme) {
   return {
@@ -336,7 +384,7 @@ function inputStyle(theme) {
     padding: "0 12px",
     borderRadius: 10,
     border: `1px solid ${theme.border}`,
-    background: "#1f1f24",
+    background: "#ffffffff",
     color: theme.text,
     outline: "none",
   };
