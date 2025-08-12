@@ -239,7 +239,7 @@ function US22PredictivePanel({ theme }) {
 
   return (
     <div>
-      <h2 style={{ marginTop: 6, marginBottom: 4 }}>US2.2 — Predicted Availability</h2>
+      <h2 style={{ marginTop: 6, marginBottom: 4 }}> Predicted Availability</h2>
       <p style={{ color: theme.subtext, marginTop: 0 }}>
         Enter time & location to see predicted availability with a clear recommendation (e.g., “most likely / not possible”).
       </p>
@@ -334,7 +334,7 @@ function US23HistoricalPanel({ theme }) {
 
   return (
     <div>
-      <h2>US2.3 — Historical Availability Trends</h2>
+      <h2> Historical Availability Trends</h2>
       <input
         name="area"
         value={filters.area}
