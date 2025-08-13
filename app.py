@@ -1,450 +1,295 @@
-# app.py
-import os
-import math
-import re
-from datetime import time as dtime
-from typing import Optional, Tuple, Dict, Any, List
+# app.py  —— 单文件可运行版本（内嵌 HTML），数据从 Railway Postgres 读取
+# 依赖：pip install flask pandas numpy sqlalchemy psycopg2-binary
 
+from flask import Flask, request, render_template_string
 import pandas as pd
-import psycopg2
-from flask import Flask, request, jsonify
+import numpy as np
+import os
+from sqlalchemy import create_engine
 
-# =========================
-# Configuration
-# =========================
-# Prefer env var in real deployments. Falls back to your provided URL for convenience.
-DATABASE_URL = os.environ.get(
+AUS_TZ = "Australia/Melbourne"
+WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+# === 数据库配置（可用环境变量 DATABASE_URL 覆盖）===
+DB_URL = os.environ.get(
     "DATABASE_URL",
-    "postgresql://postgres:eSyUrNgzoGjZybYhxZRwLKaSbAxkQmIQ@trolley.proxy.rlwy.net:13392/railway"
+    "postgresql+psycopg2://postgres:eSyUrNgzoGjZybYhxZRwLKaSbAxkQmIQ@trolley.proxy.rlwy.net:13392/railway"
 )
-TZ_AWARE = False  # set True only if your DB timestamps are tz-aware and you want AU/Melbourne conversion
+TABLE  = "parking_merged_all"
 
-# =========================
-# DB helpers
-# =========================
-def read_sql(sql: str) -> pd.DataFrame:
-    with psycopg2.connect(DATABASE_URL) as conn:
-        return pd.read_sql_query(sql, conn)
-
-# =========================
-# Utility / parsing
-# =========================
-def wilson_interval(k: int, n: int, z: float = 1.96) -> Tuple[float, float]:
-    if n <= 0:
-        return 0.0, 1.0
-    p = k / n
-    denom = 1 + (z ** 2) / n
-    centre = (p + (z ** 2) / (2 * n)) / denom
-    half = (z * math.sqrt((p * (1 - p) + (z ** 2) / (4 * n)) / n)) / denom
-    return max(0.0, centre - half), min(1.0, centre + half)
-
-def confidence_from_history(k: int, n: int) -> str:
-    low, high = wilson_interval(k, n)
-    halfwidth = (high - low) / 2
-    if n >= 80 and halfwidth <= 0.10:
-        return "High"
-    if n >= 30 and halfwidth <= 0.20:
-        return "Medium"
-    return "Low"
-
-def parse_days_to_weekday_set(day_str: str) -> Optional[set]:
-    if not isinstance(day_str, str) or not day_str.strip():
-        return None
-    s = day_str.strip().lower()
-    if "all" in s:
-        return set(range(7))
-    name_to_idx = {
-        "mon": 0, "monday": 0,
-        "tue": 1, "tues": 1, "tuesday": 1,
-        "wed": 2, "wednesday": 2,
-        "thu": 3, "thur": 3, "thurs": 3, "thursday": 3,
-        "fri": 4, "friday": 4,
-        "sat": 5, "saturday": 5,
-        "sun": 6, "sunday": 6,
-    }
-    parts = [p.strip() for p in re.split(r"[;,]", s) if p.strip()]
-    wd = set()
-
-    def add_range(a: str, b: str):
-        a_idx = name_to_idx.get(a[:3]); b_idx = name_to_idx.get(b[:3])
-        if a_idx is None or b_idx is None:
-            return
-        if a_idx <= b_idx:
-            for i in range(a_idx, b_idx + 1):
-                wd.add(i)
-        else:
-            for i in list(range(a_idx, 7)) + list(range(0, b_idx + 1)):
-                wd.add(i)
-
-    if not parts:
-        return None
-    for p in parts:
-        rng = re.split(r"[-–—to]+", p)
-        rng = [r.strip() for r in rng if r.strip()]
-        if len(rng) == 2:
-            add_range(rng[0], rng[1])
-        else:
-            key = p.split()[0][:3]
-            if key in name_to_idx:
-                wd.add(name_to_idx[key])
-    return wd if wd else None
-
-def parse_time_hhmm(x: Any) -> Optional[dtime]:
-    if pd.isna(x):
-        return None
-    if isinstance(x, dtime):
-        return x
-    try:
-        return pd.to_datetime(str(x), format="%H:%M", errors="coerce").time()
-    except Exception:
-        return None
-
-def time_in_window(t: dtime, start: dtime, finish: dtime) -> bool:
-    if start is None or finish is None or t is None:
-        return False
-    if start <= finish:
-        return start <= t <= finish
-    return t >= start or t <= finish  # overnight window
-
-def normalize_street(s: str) -> str:
-    return re.sub(r"\s+", " ", s.strip().lower()) if isinstance(s, str) else ""
-
-# =========================
-# Load data from Postgres
-# =========================
-# 1) Sensors (core time series)
-df_s = read_sql("SELECT * FROM on_street_parking_bay_sensors")
-df_s.columns = df_s.columns.str.strip()
-# expected columns: lastupdated, status_timestamp, zone_number, kerbsideid, location
-df_s["status_timestamp"] = pd.to_datetime(df_s["status_timestamp"], errors="coerce")
-if TZ_AWARE:
-    try:
-        df_s["status_timestamp"] = df_s["status_timestamp"].dt.tz_convert("Australia/Melbourne")
-    except Exception:
-        pass
-df_s["zone_number"] = pd.to_numeric(df_s["zone_number"], errors="coerce")
-
-# Try to find an occupancy/status column (optional)
-occ_cols = [c for c in df_s.columns if c.lower() in
-            {"status", "status_description", "occupancy", "bay_status", "space_status"}]
-
-# 2) Bays (for capacity)
-df_bays = read_sql("SELECT * FROM on_street_parking_bays")
-df_bays.columns = df_bays.columns.str.strip()
-df_bays["roadsegmentid"] = pd.to_numeric(df_bays["roadsegmentid"], errors="coerce")
-df_bays["kerbsideid"]    = pd.to_numeric(df_bays["kerbsideid"], errors="coerce")
-
-# 3) Zone ↔ Street segments (mapping)
-df_link = read_sql("SELECT * FROM parking_zones_linked_to_street_segments")
-df_link.columns = df_link.columns.str.strip()
-df_link["segment_id"] = pd.to_numeric(df_link["segment_id"], errors="coerce")
-df_link["__street_norm__"] = df_link["onstreet"].map(normalize_street)
-
-# 4) Sign plates (time restrictions)
-df_sign = read_sql("SELECT * FROM sign_plates_located_in_each_parking_zone")
-df_sign.columns = df_sign.columns.str.strip()
-df_sign["__wdays__"]  = df_sign["restriction_days"].map(parse_days_to_weekday_set)
-df_sign["__tstart__"] = df_sign["time_restrictions_start"].map(parse_time_hhmm)
-df_sign["__tfinish__"] = df_sign["time_restrictions_finish"].map(parse_time_hhmm)
-
-# Zone capacity via bays -> link
-capacity_by_zone: Dict[str, int] = {}
-try:
-    bays_link = df_bays.merge(
-        df_link[["segment_id", "parkingzone"]],
-        left_on="roadsegmentid", right_on="segment_id", how="left"
-    )
-    cap = bays_link.groupby("parkingzone", dropna=True)["kerbsideid"].nunique().rename("bay_count")
-    capacity_by_zone = cap.to_dict()
-except Exception:
-    capacity_by_zone = {}
-
-# Street -> zones mapping
-street_to_zones: Dict[str, List[str]] = (
-    df_link.dropna(subset=["__street_norm__", "parkingzone"])
-    .groupby("__street_norm__")["parkingzone"].apply(lambda s: sorted(set(s))).to_dict()
-)
-
-# =========================
-# Historical availability (only if occupancy exists)
-# =========================
-def derive_is_free_column(df: pd.DataFrame, occ_candidates: List[str]) -> Optional[pd.Series]:
-    if not occ_candidates:
-        return None
-    col = occ_candidates[0]
-    s = df[col].astype(str).str.strip().str.lower()
-
-    free_tokens = {"unoccupied", "free", "vacant", "available", "clear"}
-    occ_tokens  = {"occupied", "present", "busy", "unavailable"}
-
-    # direct text match
-    if s.isin(free_tokens | occ_tokens).any():
-        return s.isin(free_tokens)
-    # 0/1 encoding
-    if s.str.fullmatch(r"[01]").all():
-        return s.astype(int).map(lambda x: x == 0)
-    # substring heuristic
-    if s.str.contains("unoccupied|available|vacant", regex=True).any() or s.str.contains("occupied|present", regex=True).any():
-        return s.str.contains("unoccupied|available|vacant", regex=True)
-
-    return None
-
-has_hist = False
-hist_df = None
-
-df_s = df_s.dropna(subset=["status_timestamp", "zone_number"])
-df_s["hour"] = df_s["status_timestamp"].dt.hour
-df_s["dow"]  = df_s["status_timestamp"].dt.dayofweek  # Mon=0
-
-is_free_series = derive_is_free_column(df_s, occ_cols)
-if is_free_series is not None:
-    df_s["is_free"] = is_free_series
-    agg = (
-        df_s.groupby(["zone_number", "dow", "hour"])
-        .agg(total=("is_free", "size"), free=("is_free", "sum"))
-        .reset_index()
-    )
-    agg["availability"] = agg["free"] / agg["total"]
-    hist_df = agg
-    has_hist = True
-
-# =========================
-# Restriction logic
-# =========================
-def is_restricted(zone: str, dt: pd.Timestamp) -> bool:
-    if zone is None or not isinstance(zone, str):
-        return False
-    sub = df_sign[df_sign["parkingzone"].astype(str) == str(zone)]
-    if sub.empty:
-        return False
-    wd = int(dt.dayofweek)
-    t_local = dtime(dt.hour, dt.minute)
-    for _, r in sub.iterrows():
-        days = r["__wdays__"]; tstart = r["__tstart__"]; tfinish = r["__tfinish__"]
-        if days is None or tstart is None or tfinish is None:
-            continue
-        if wd in days and time_in_window(t_local, tstart, tfinish):
-            return True
-    return False
-
-# =========================
-# Zone/street resolution
-# =========================
-def zones_for_street(street_name: str) -> List[str]:
-    key = normalize_street(street_name)
-    return street_to_zones.get(key, [])
-
-def best_zone_for_street(street_name: str) -> Optional[str]:
-    zlist = zones_for_street(street_name)
-    if not zlist:
-        return None
-    zlist_sorted = sorted(zlist, key=lambda z: capacity_by_zone.get(z, 0), reverse=True)
-    return zlist_sorted[0]
-
-# =========================
-# Prediction
-# =========================
-def predict_for_zone(zone: str, dt: pd.Timestamp) -> Dict[str, Any]:
-    # 1) Hard restriction overrides
-    if is_restricted(zone, dt):
-        return {
-            "availability": 0.0,
-            "confidence": "High",
-            "model": "rules-only",
-            "reason": "Restricted by sign plate at this time."
-        }
-
-    # 2) Historical (if available)
-    if has_hist:
-        dow = int(dt.dayofweek); hr = int(dt.hour)
-        cnd = (hist_df["zone_number"].astype(str) == str(zone)) & (hist_df["dow"] == dow) & (hist_df["hour"] == hr)
-        sub = hist_df[cnd]
-        if sub.empty:
-            cnd2 = (hist_df["zone_number"].astype(str) == str(zone)) & (hist_df["hour"] == hr)
-            sub = hist_df[cnd2]
-        if sub.empty:
-            cnd3 = (hist_df["zone_number"].astype(str) == str(zone))
-            sub = hist_df[cnd3]
-        if not sub.empty:
-            sub = sub.sort_values("total", ascending=False).iloc[0]
-            k = int(sub["free"]); n = int(sub["total"])
-            avail = float(sub["availability"])
-            conf = confidence_from_history(k, n)
-            low, high = wilson_interval(k, n)
-            return {
-                "availability": avail,
-                "confidence": conf,
-                "model": "historical",
-                "reason": f"Based on {n} historical samples in this bucket."
-                "samples": {"free": k, "total": n, "ci_low": low, "ci_high": high}
-            }
-
-    # 3) Fallback (no occupancy column found)
-    cap = capacity_by_zone.get(zone, None)
-    base_msg = "No occupancy column detected; returning rule-based fallback."
-    if cap is None:
-        return {"availability": None, "confidence": "Low", "model": "rules-only",
-                "reason": base_msg + " Zone capacity unknown."}
-    return {"availability": None, "confidence": "Low", "model": "rules-only",
-            "reason": base_msg + f" Zone has ~{cap} bays; availability not estimated."}
-
-# =========================
-# Flask app + routes (API + Demo page)
-# =========================
-app = Flask(__name__)
-
-@app.route("/health", methods=["GET"])
-def health():
-    return jsonify({"ok": True, "has_hist": has_hist})
-
-@app.route("/predict_parking", methods=["GET"])
-def predict_parking():
-    """
-    Query params:
-      - time: "YYYY-MM-DD HH:MM" (required)
-      - zone: string (optional) — matches `parkingzone` or `zone_number` values
-      - street: string (optional) — if zone omitted, resolve street -> best zone
-    """
-    time_str = request.args.get("time")
-    zone = request.args.get("zone")
-    street = request.args.get("street")
-
-    if not time_str:
-        return jsonify({"error": "Missing 'time' (YYYY-MM-DD HH:MM)."}), 400
-    try:
-        dt = pd.to_datetime(time_str)
-        if TZ_AWARE:
-            dt = dt.tz_convert("Australia/Melbourne")
-    except Exception:
-        return jsonify({"error": "Invalid 'time' format. Use 'YYYY-MM-DD HH:MM'."}), 400
-
-    resolved_zone = zone
-    notes = None
-    if not resolved_zone and street:
-        resolved_zone = best_zone_for_street(street)
-        if not resolved_zone:
-            return jsonify({"error": f"No zone mapping found for street '{street}'."}), 404
-        notes = f"Resolved street '{street}' to zone '{resolved_zone}'."
-
-    if not resolved_zone:
-        return jsonify({"error": "Provide either 'zone' or 'street'."}), 400
-
-    res = predict_for_zone(str(resolved_zone), dt)
-
-    if res["availability"] is None:
-        avail_msg = "Unknown"
-    else:
-        avail_msg = f"{round(res['availability'] * 100, 1)}%"
-
-    human = f"{res['confidence']} confidence — availability: {avail_msg} at {dt.strftime('%H:00')}"
-    if notes:
-        human = notes + " " + human
-
-    return jsonify({
-        "zone": str(resolved_zone),
-        "time": dt.strftime("%Y-%m-%d %H:%M"),
-        "availability": res["availability"],
-        "confidence": res["confidence"],
-        "model": res["model"],
-        "reason": res["reason"],
-        "message": human
-    })
-
-@app.route("/", methods=["GET"])
-def demo_page():
-    return """
-<!doctype html>
-<html>
+# ---------------- 内嵌模板 ----------------
+INDEX_HTML = r"""<!doctype html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>Parking Availability Demo</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Melbourne Parking — Daily Forecast</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; max-width: 760px; margin: 40px auto; }
-    label { display:block; margin: 12px 0 6px; }
-    input, button { padding: 8px; font-size: 14px; }
-    .row { display:flex; gap:12px; align-items:center; flex-wrap: wrap; }
-    .hint { color:#666; font-size: 13px; }
-    #result { margin-top:20px; padding:12px; border:1px solid #eee; border-radius:8px; background:#fafafa; }
+    .container { max-width: 1100px; }
+    .muted { color: #6b7280; font-size: 0.9rem; }
+    canvas { max-height: 320px; }
+    .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 1rem; }
+    .pill { border-radius: 9999px; padding: 0.2rem 0.6rem; font-weight: 600; }
+    .pill.high { background: #e6ffed; color: #065f46; }
+    .pill.medium { background: #fff7ed; color: #9a3412; }
+    .pill.low { background: #fee2e2; color: #991b1b; }
+    .flex { display: flex; gap: 1rem; align-items: end; }
+    nav { margin: 1rem 0; }
   </style>
 </head>
 <body>
-  <h2>Predict Parking Availability</h2>
-  <div>
-    <label>Time (local):</label>
-    <input id="time" type="datetime-local" />
-    <div class="hint">Example: 2025-08-08 10:00</div>
+  <main class="container">
+    <h2>🅿️ Melbourne Parking — Daily Forecast</h2>
+    <p class="muted">Pick a weekday to see the full-day availability profile for the selected location.</p>
 
-    <div class="row">
-      <div>
-        <label>Zone (optional):</label>
-        <input id="zone" type="text" placeholder="e.g., 7539" />
+    <form method="get">
+      <div class="grid">
+        <div>
+          <label for="street">Street</label>
+          <select id="street" name="street" onchange="this.form.submit()">
+            {% for s in streets %}
+              <option value="{{s}}" {% if s == street %}selected{% endif %}>{{s}}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label for="cross_from">Between (from)</label>
+          <select id="cross_from" name="cross_from">
+            <option value="(Any)" {% if cross_from_sel == "(Any)" %}selected{% endif %}>(Any)</option>
+            {% for cf in cross_from_opts %}
+              <option value="{{cf}}" {% if cf == cross_from_sel %}selected{% endif %}>{{cf}}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label for="cross_to">Between (to)</label>
+          <select id="cross_to" name="cross_to">
+            <option value="(Any)" {% if cross_to_sel == "(Any)" %}selected{% endif %}>(Any)</option>
+            {% for ct in cross_to_opts %}
+              <option value="{{ct}}" {% if ct == cross_to_sel %}selected{% endif %}>{{ct}}</option>
+            {% endfor %}
+          </select>
+        </div>
       </div>
-      <div>
-        <label>Street (optional):</label>
-        <input id="street" type="text" placeholder="e.g., Swanston Street" />
+
+      <div class="flex">
+        <div>
+          <label for="weekday">Weekday</label>
+          <select id="weekday" name="weekday">
+            {% for wd in weekday_labels %}
+              <option value="{{wd}}" {% if wd == weekday_label %}selected{% endif %}>{{wd}}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <button type="submit">Update</button>
       </div>
-    </div>
+    </form>
 
-    <button id="go">Predict</button>
-    <div id="result"></div>
-  </div>
+    <section class="card">
+      <h4>Daily Forecast ({{ weekday_label }})</h4>
+      {% if not has_data %}
+        <p><strong>No data</strong> for this weekday at the selected location. Unable to provide a forecast.</p>
+      {% else %}
+        {% if fallback %}<p class="muted">No exact cross-street match; fell back to the whole street.</p>{% endif %}
+      {% endif %}
+      <canvas id="chart" aria-label="Hourly availability chart" role="img"></canvas>
+      <p class="muted">Availability is computed as the share of records with status "Unoccupied".</p>
+    </section>
 
+    <details>
+      <summary>Show hourly details</summary>
+      <table>
+        <thead>
+          <tr><th>Hour</th><th>Availability</th><th>n</th><th>Confidence</th></tr>
+        </thead>
+        <tbody>
+        {% for h in hours_24 %}
+          <tr>
+            <td>{{ "%02d:00"|format(h) }}</td>
+            {% if chart_values[h] is not none %}
+              <td>{{ (chart_values[h] * 100) | round(0) }}%</td>
+              <td>{{ chart_samples[h] }}</td>
+              {% set cl = chart_conf[h].lower() %}
+              <td><span class="pill {{cl}}">{{ chart_conf[h] }}</span></td>
+            {% else %}
+              <td colspan="3" class="muted">No data</td>
+            {% endif %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </details>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script>
-    async function predict() {
-      const t = document.getElementById('time').value; // "YYYY-MM-DDTHH:MM"
-      const zone = document.getElementById('zone').value.trim();
-      const street = document.getElementById('street').value.trim();
-      const result = document.getElementById('result');
-      result.textContent = 'Loading...';
-
-      if (!t) {
-        result.textContent = 'Please select a time.';
-        return;
-      }
-      const timeParam = encodeURIComponent(t.replace('T',' '));
-
-      let url = `/predict_parking?time=${timeParam}`;
-      if (zone) url += `&zone=${encodeURIComponent(zone)}`;
-      else if (street) url += `&street=${encodeURIComponent(street)}`;
-      else {
-        result.textContent = 'Provide either Zone or Street.';
-        return;
-      }
-
-      try {
-        const resp = await fetch(url);
-        const data = await resp.json();
-        if (!resp.ok) {
-          result.textContent = data.error || 'Error';
-          return;
+    const hours = {{ chart_hours | tojson }};
+    const values = {{ chart_values | tojson }};
+    const ctx = document.getElementById('chart').getContext('2d');
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: hours.map(h => String(h).padStart(2,'0') + ':00'),
+        datasets: [{
+          label: 'Availability (share Unoccupied)',
+          data: values,
+          spanGaps: true,
+          tension: 0.2
+        }]
+      },
+      options: {
+        responsive: true,
+        scales: {
+          y: { min: 0, max: 1, ticks: { callback: v => (v*100).toFixed(0) + '%' } }
         }
-        const pct = (data.availability == null) ? 'Unknown' : (data.availability * 100).toFixed(1) + '%';
-        result.innerHTML = `
-          <b>${data.message}</b><br/>
-          <div class="hint">
-            Zone: ${data.zone} | Model: ${data.model} | Reason: ${data.reason}
-          </div>`;
-      } catch (e) {
-        result.textContent = 'Network error: ' + e.message;
       }
-    }
-    document.getElementById('go').addEventListener('click', predict);
+    });
   </script>
 </body>
 </html>
 """
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "5000"))
-    app.run(host="0.0.0.0", port=port, debug=True)
+app = Flask(__name__)
 
-@app.route("/historical_trends", methods=["GET"])
-def historical_trends():
-    zone = request.args.get("zone")
-    if not has_hist or not zone:
-        return jsonify({"data": []})
-    sub = hist_df[hist_df["zone_number"].astype(str) == str(zone)]
-    out = (sub[["dow","hour","availability","total"]]
-            .sort_values(["dow","hour"])
-            .to_dict(orient="records"))
-    return jsonify({"zone": str(zone), "data": out})
+def to_str_strip(series: pd.Series) -> pd.Series:
+    return series.astype("string").fillna("").str.strip()
+
+def map_status_to_available(s: str) -> float:
+    if isinstance(s, str):
+        ss = s.strip().lower()
+        if ss == "unoccupied":
+            return 1.0
+        if ss == "present":
+            return 0.0
+    return np.nan
+
+def load_data_from_db(db_url: str, table: str) -> pd.DataFrame:
+    # Railway 通常要求 SSL
+    engine = create_engine(db_url, connect_args={"sslmode": "require"}, pool_pre_ping=True, future=True)
+    with engine.connect() as conn:
+        df = pd.read_sql(f'SELECT * FROM {table}', conn)
+
+    # 规范文本列
+    for col in ["OnStreet", "StreetFrom", "StreetTo"]:
+        if col in df.columns:
+            df[col] = to_str_strip(df[col])
+
+    # 状态 -> 可用标记
+    if "Status_Description" in df.columns:
+        df["available"] = df["Status_Description"].apply(map_status_to_available)
+    else:
+        df["available"] = np.nan
+
+    # 时间戳解析 -> AU/Melbourne 提取小时/星期
+    if "Status_Timestamp" in df.columns:
+        df["ts"] = pd.to_datetime(df["Status_Timestamp"], errors="coerce", utc=True)
+    else:
+        df["ts"] = pd.NaT
+
+    if df["ts"].notna().any():
+        try:
+            df["ts_local"] = df["ts"].dt.tz_convert(AUS_TZ)
+        except Exception:
+            df["ts_local"] = df["ts"]
+        df["hour"] = df["ts_local"].dt.hour
+        df["weekday"] = df["ts_local"].dt.weekday  # 0..6
+    else:
+        df["hour"] = np.nan
+        df["weekday"] = np.nan
+
+    return df
+
+def aggregate_by_time(loc_df: pd.DataFrame) -> pd.DataFrame:
+    loc_df = loc_df.dropna(subset=["available", "hour", "weekday"])
+    if loc_df.empty:
+        return pd.DataFrame(columns=["weekday", "hour", "availability", "samples"])
+    return (
+        loc_df.groupby(["weekday", "hour"], as_index=False)
+              .agg(availability=("available", "mean"), samples=("available", "size"))
+    )
+
+# === 启动时从数据库读取 ===
+DF = load_data_from_db(DB_URL, TABLE)
+STREETS = sorted([s for s in DF.get("OnStreet", pd.Series(dtype=str)).dropna().unique() if s])
+
+def get_crossing_options(street: str):
+    df_street = DF[DF["OnStreet"] == street].copy()
+    if "StreetFrom" in DF.columns:
+        cross_from = sorted([s for s in df_street["StreetFrom"].dropna().unique() if s])
+    else:
+        cross_from = []
+    if "StreetTo" in DF.columns:
+        cross_to = sorted([s for s in df_street["StreetTo"].dropna().unique() if s])
+    else:
+        cross_to = []
+    return cross_from, cross_to
+
+@app.route("/", methods=["GET"])
+def index():
+    if not STREETS:
+        return "No street data available (OnStreet column empty)."
+
+    # Selections
+    street = request.args.get("street") or ("Spring Street" if "Spring Street" in STREETS else STREETS[0])
+    cross_from_sel = request.args.get("cross_from") or "(Any)"
+    cross_to_sel   = request.args.get("cross_to") or "(Any)"
+    weekday_label  = request.args.get("weekday") or WEEKDAY_LABELS[pd.Timestamp.now(tz=AUS_TZ).weekday()]
+    weekday_req    = WEEKDAY_LABELS.index(weekday_label) if weekday_label in WEEKDAY_LABELS else 0
+
+    # Crossing options
+    cross_from_opts, cross_to_opts = get_crossing_options(street)
+
+    # Location filter
+    mask = (DF["OnStreet"] == street)
+    if "StreetFrom" in DF.columns and cross_from_sel != "(Any)":
+        mask &= (DF["StreetFrom"] == cross_from_sel)
+    if "StreetTo" in DF.columns and cross_to_sel != "(Any)":
+        mask &= (DF["StreetTo"] == cross_to_sel)
+
+    loc_df = DF.loc[mask].copy()
+    fallback = False
+    if loc_df.empty:
+        loc_df = DF[DF["OnStreet"] == street].copy()
+        fallback = True
+
+    # Aggregate for the selected weekday
+    grouped = aggregate_by_time(loc_df)
+    day = grouped[grouped["weekday"] == weekday_req].sort_values("hour")
+
+    chart_hours   = list(range(24))
+    hours_24      = list(range(24))  # 给模板循环用，避免依赖 Jinja 的 range
+    chart_values  = [None] * 24
+    chart_samples = [0] * 24
+    chart_conf    = ["Low"] * 24
+
+    if not day.empty:
+        for _, r in day.iterrows():
+            h = int(r["hour"]); p = float(r["availability"]); n = int(r["samples"])
+            chart_values[h]  = p
+            chart_samples[h] = n
+            chart_conf[h]    = "High" if n >= 100 else ("Medium" if n >= 20 else "Low")
+
+    has_data = any(v is not None for v in chart_values)
+
+    return render_template_string(
+        INDEX_HTML,
+        streets=STREETS,
+        street=street,
+        cross_from_opts=cross_from_opts,
+        cross_to_opts=cross_to_opts,
+        cross_from_sel=cross_from_sel,
+        cross_to_sel=cross_to_sel,
+        weekday_label=weekday_label,
+        weekday_labels=WEEKDAY_LABELS,
+        chart_hours=chart_hours,
+        hours_24=hours_24,
+        chart_values=chart_values,
+        chart_samples=chart_samples,
+        chart_conf=chart_conf,
+        has_data=has_data,
+        fallback=fallback
+    )
+
+if __name__ == "__main__":
+    app.run(debug=True)

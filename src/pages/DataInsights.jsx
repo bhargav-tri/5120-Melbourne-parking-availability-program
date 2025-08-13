@@ -6,8 +6,8 @@ export default function DataInsights() {
 
   const backButtonStyle = {
     position: "absolute",
-    top: "20px",
-    right: "30px",
+    top: "12px",          // 更贴顶
+    right: "20px",
     fontSize: "2rem",
     color: "white",
     background: "rgba(0,0,0,0.3)",
@@ -27,7 +27,9 @@ export default function DataInsights() {
     backgroundSize: "cover",
     backgroundPosition: "center",
     backgroundRepeat: "no-repeat",
-    padding: "80px 20px 40px",
+    // 贴顶：取消原来的 80px 顶部内边距；考虑刘海安全区
+    padding: "0 20px 40px",
+    paddingTop: "env(safe-area-inset-top, 0px)",
     fontFamily: "Inter, system-ui, sans-serif",
   };
 
@@ -41,7 +43,7 @@ export default function DataInsights() {
 
   const card = {
     background: "rgba(255,255,255,0.85)",
-    color: "#111", // Dark text for readability
+    color: "#111",
     borderRadius: 16,
     overflow: "hidden",
     boxShadow: "0 10px 30px rgba(0,0,0,0.3)",
@@ -50,7 +52,7 @@ export default function DataInsights() {
   const cardHeader = {
     padding: "16px 20px",
     borderBottom: "1px solid rgba(0,0,0,0.1)",
-    color: "#111", // Darker font for subheadings
+    color: "#111",
   };
 
   const cardBody = { padding: 0 };
@@ -58,7 +60,7 @@ export default function DataInsights() {
   const meta = {
     padding: "10px 20px 16px",
     fontSize: 13,
-    color: "#374151", // Dark gray
+    color: "#374151",
     display: "flex",
     gap: 16,
     flexWrap: "wrap",
@@ -90,15 +92,27 @@ export default function DataInsights() {
   return (
     <div style={pageStyle}>
       {/* Back button */}
-      <div style={backButtonStyle} onClick={() => navigate("/")}>
-        ←
-      </div>
+      <div style={backButtonStyle} onClick={() => navigate("/")}>←</div>
 
-      {/* Page heading */}
-      <h1 style={{ textAlign: "center", marginBottom: 8, fontSize: "2.5rem", color: "white" }}>
+      {/* 标题贴顶：移除默认上外边距 */}
+      <h1
+        style={{
+          textAlign: "center",
+          margin: "0 0 8px 0",      // 顶部 margin 设为 0
+          fontSize: "2.5rem",
+          color: "white",
+        }}
+      >
         Parking & Traffic Insights
       </h1>
-      <p style={{ textAlign: "center", color: "#f3e7e7ff", marginBottom: 28, fontSize: "1.1rem" }}>
+      <p
+        style={{
+          textAlign: "center",
+          color: "#f3e7e7ff",
+          margin: "0 0 28px 0",     // 同步去掉顶部 margin
+          fontSize: "1.1rem",
+        }}
+      >
         EPIC 1.0 Visualisations: Vehicle Ownership Growth & Melbourne Population Trends
       </p>
 
@@ -113,11 +127,7 @@ export default function DataInsights() {
           </div>
           <div style={cardBody}>
             <div style={iframeBox}>
-              <iframe
-                title="Victoria Vehicle Trend"
-                src="/victoria_car_animation.html"
-                style={iframe}
-              />
+              <iframe title="Victoria Vehicle Trend" src="/victoria_car_animation.html" style={iframe} />
             </div>
             <div style={meta}>
               <span style={badge}>Source: VicRoads</span>
@@ -136,11 +146,7 @@ export default function DataInsights() {
           </div>
           <div style={cardBody}>
             <div style={iframeBox}>
-              <iframe
-                title="Melbourne Population Growth"
-                src="/melbourne_population_animation.html"
-                style={iframe}
-              />
+              <iframe title="Melbourne Population Growth" src="/melbourne_population_animation.html" style={iframe} />
             </div>
             <div style={meta}>
               <span style={badge}>Source: ABS</span>
