@@ -23,8 +23,8 @@ const observer = new IntersectionObserver((entries) => {
                 if (plotDiv && plotDiv.layout) {
                     // Start the animation automatically
                     Plotly.animate(plotDiv, null, {
-                        frame: {duration: 40, redraw: true},
-                        transition: {duration: 20, easing: 'cubic-in-out'},
+                        frame: {duration: 10, redraw: true},
+                        transition: {duration: 10, easing: 'cubic-in-out'},
                         mode: 'immediate'
                     });
                 }
